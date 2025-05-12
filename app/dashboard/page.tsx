@@ -80,6 +80,8 @@ export default function Dashboard() {
           
           // Get current track (latest in-progress task's track or first track if none in progress)
           const currentProgressTask = taskProgressData?.find(tp => tp.status === "in-progress")
+          let trackId = null;
+          
           if (currentProgressTask) {
             const { data: currentTask, error: currentTaskError } = await supabaseClient
               .from("tasks")
@@ -90,7 +92,7 @@ export default function Dashboard() {
             if (currentTaskError) {
               console.error("Error fetching current task data:", currentTaskError)
             } else {
-              setCurrentTrackId(currentTask.track_id)
+              trackId = currentTask.track_id;
             }
           } else {
             // If no current progress, find the latest completed task
@@ -114,7 +116,7 @@ export default function Dashboard() {
               if (taskError) {
                 console.error("Error fetching task data:", taskError)
               } else {
-                setCurrentTrackId(taskData.track_id)
+                trackId = taskData.track_id;
               }
             } else {
               // If no tasks have been completed, set to track with earliest start date
@@ -124,34 +126,35 @@ export default function Dashboard() {
                 .order("start_date", { ascending: true })
                 .limit(1)
                 .single()
-              console.log('Finding earliest track...')
+              
               if (earliestTrackError) {
                 console.error("Error fetching earliest track:", earliestTrackError)
               } else {
-                setCurrentTrackId(earliestTrack.id)
+                trackId = earliestTrack.id;
                 console.log('Found earliest track:', earliestTrack)
-                console.log('Earliest track ID', earliestTrack.id, currentTrackId)
               }
             }
           }
           
-          // Fetch current track data
-          console.log('Current track ID:', currentTrackId)
-          if (currentTrackId) {
-            console.log('Fetching current track data...')
+          // Set the track ID and immediately fetch the track data if we have an ID
+          if (trackId) {
+            setCurrentTrackId(trackId);
+            console.log('Setting current track ID to:', trackId);
+            
+            // Fetch current track data
             const { data: currentTrackData, error: trackError } = await supabaseClient
               .from("tracks")
               .select("*")
-              .eq("id", currentTrackId)
+              .eq("id", trackId)
               .single()
-            console.log('Fetched current track data:', currentTrackData)
+            
             if (trackError) {
               console.error("Error fetching current track:", trackError)
             } else {
               setCurrentTrack(currentTrackData)
+              console.log('Fetched current track data:', currentTrackData)
 
               // Fetch tasks for current track
-              console.log('Fetching tasks for current track...')
               const { data: tasksData, error: tasksError } = await supabaseClient
                 .from("tasks")
                 .select("*")
@@ -163,6 +166,7 @@ export default function Dashboard() {
               } else {
                 setTasks(tasksData || [])
                 console.log('Fetched tasks:', tasksData)
+                
                 // Fetch user progress for these tasks
                 const { data: progressData, error: progressError } = await supabaseClient
                   .from("user_task_progress")
