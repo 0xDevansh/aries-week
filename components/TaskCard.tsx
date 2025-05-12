@@ -233,7 +233,7 @@ export function TaskCard({ task, deadline }: TaskCardProps) {
             className="font-geist-mono text-xs text-white hover:underline"
             target="_blank"
           >
-            View Resources →
+            Go to resource →
           </Link>
         </CardFooter>
       )}

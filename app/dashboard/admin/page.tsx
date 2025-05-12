@@ -222,6 +222,7 @@ export default function AdminPage() {
           } else {
             setTracks([])
             setIsLoading(false)
+            console.log('TRACKS -----',tracks)
             return
           }
         }
@@ -592,21 +593,23 @@ export default function AdminPage() {
                 <CardHeader className="border-b border-white/10 p-3 md:p-4 pb-2 md:pb-3">
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 md:gap-0">
                     <CardTitle className="text-base md:text-lg text-white">Manage Tracks</CardTitle>
-                    <Button 
-                      onClick={() => {
-                        setIsCreatingTrack(true)
-                        setCurrentTrack({
-                          name: "",
-                          description: "",
-                          status: "upcoming",
-                          start_date: null,
-                          end_date: null
-                        })
-                      }}
-                      className="border border-white/20 bg-white/10 px-2 py-1 md:px-4 md:py-2 text-white hover:bg-white/20 text-xs md:text-sm"
-                    >
-                      Add Track
-                    </Button>
+                    {profile?.role === "superadmin" && (
+                      <Button 
+                        onClick={() => {
+                          setIsCreatingTrack(true)
+                          setCurrentTrack({
+                            name: "",
+                            description: "",
+                            status: "upcoming",
+                            start_date: null,
+                            end_date: null
+                          })
+                        }}
+                        className="border border-white/20 bg-white/10 px-2 py-1 md:px-4 md:py-2 text-white hover:bg-white/20 text-xs md:text-sm"
+                      >
+                        Add Track
+                      </Button>
+                    )}
                   </div>
                 </CardHeader>
                 <CardContent className="p-2 md:p-4 overflow-x-auto">

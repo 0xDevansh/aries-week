@@ -74,8 +74,9 @@ export default function Dashboard() {
           if (completedTasksError) {
             console.error("Error fetching completed tasks:", completedTasksError)
           } else {
-            const completedTrackIds = completedTasks.map(task => task.track_id)
-            setCompletedTracks(completedTrackIds)
+            // remove duplicates from completedTrackIds
+            const uniqueCompletedTrackIds = [...new Set(completedTasks.map(task => task.track_id))]
+            setCompletedTracks(uniqueCompletedTrackIds)
           }
           
           // Get current track (latest in-progress task's track or first track if none in progress)
