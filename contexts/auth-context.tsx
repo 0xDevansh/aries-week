@@ -1,7 +1,7 @@
 "use client"
 
 import { createContext, useContext, useEffect, useState } from "react"
-import { Session, User } from "@supabase/supabase-js"
+import { Session, SupabaseClient, User } from "@supabase/supabase-js"
 import { useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 
@@ -19,6 +19,7 @@ type AuthContextType = {
   session: Session | null
   isLoading: boolean
   isProfileComplete: boolean
+  supabaseClient: SupabaseClient
   signInWithGoogle: () => Promise<void>
   signOut: () => Promise<void>
   updateProfile: (data: Partial<Profile>) => Promise<void>
@@ -167,6 +168,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       session,
       isLoading,
       isProfileComplete,
+      supabaseClient: supabase,
       signInWithGoogle,
       signOut,
       updateProfile

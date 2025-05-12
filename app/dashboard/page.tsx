@@ -9,8 +9,10 @@ import { GlowingEffect } from "@/components/ui/glowing-effect"
 import { supabase } from "@/lib/supabase"
 import { useAuth } from "@/contexts/auth-context"
 import { Database } from "@/types/supabase"
-import { TaskCard } from "@/components/TaskCard"
+import { TaskCard, TaskStatus } from "@/components/TaskCard"
 import { Badge } from "@/components/ui/badge"
+import { Tab } from "@headlessui/react";
+import { createClient } from "@/lib/supabase/client"
 
 type Track = Database["public"]["Tables"]["tracks"]["Row"]
 type Task = Database["public"]["Tables"]["tasks"]["Row"]
@@ -29,6 +31,9 @@ export default function Dashboard() {
   const [currentTrack, setCurrentTrack] = useState<Track | null>(null)
   const [tasks, setTasks] = useState<Task[]>([])
   const [userProgress, setUserProgress] = useState<Record<string, UserTaskProgress>>({})
+  const [activeTab, setActiveTab] = useState<'current' | 'upcoming' | 'past'>('current')
+  const [completedTracks, setCompletedTracks] = useState<string[]>([])
+  const [currentTrackId, setCurrentTrackId] = useState<string | null>(null)
 
   useEffect(() => {
     // Check if we're in dev mode
@@ -38,55 +43,144 @@ export default function Dashboard() {
 
   useEffect(() => {
     const fetchDashboardData = async () => {
-      if (!user) return
+      if (!user && !isTestUser) return
       
       setIsLoading(true)
       
       try {
-        // Fetch current track
-        const { data: currentTrackData, error: trackError } = await supabase
-          .from("tracks")
-          .select("*")
-          .eq("status", "current")
-          .single()
-          
-        if (trackError && trackError.code !== "PGRST116") {
-          console.error("Error fetching current track:", trackError)
-          setIsLoading(false)
-          return
-        }
+        // Use createClient() for client-side fetching
+        const supabaseClient = createClient()
         
-        if (currentTrackData) {
-          setCurrentTrack(currentTrackData)
+        // Fetch user task progress to determine latest completed task
+        const { data: taskProgressData, error: taskProgressError } = await supabaseClient
+          .from("user_task_progress")
+          .select("task_id, status, updated_at")
+          .eq("user_id", user?.id || 'test-user-id')
+          .order("updated_at", { ascending: false })
           
-          // Fetch tasks for current track
-          const { data: tasksData, error: tasksError } = await supabase
+        if (taskProgressError) {
+          console.error("Error fetching user task progress:", taskProgressError)
+        } else {
+          // Get completed tracks by fetching tasks and their associated tracks
+          const completedTaskIds = taskProgressData
+            ?.filter(tp => tp.status === "completed")
+            .map(tp => tp.task_id) || []
+
+          const { data: completedTasks, error: completedTasksError } = await supabaseClient
             .from("tasks")
-            .select("*")
-            .eq("track_id", currentTrackData.id)
-            .order("task_order", { ascending: true })
-            
-          if (tasksError) {
-            console.error("Error fetching tasks:", tasksError)
+            .select("track_id")
+            .in("id", completedTaskIds)
+
+          if (completedTasksError) {
+            console.error("Error fetching completed tasks:", completedTasksError)
           } else {
-            setTasks(tasksData || [])
-            
-            // Fetch user progress for these tasks
-            const { data: progressData, error: progressError } = await supabase
-              .from("user_task_progress")
-              .select("*")
-              .eq("user_id", user.id)
-              .in("task_id", tasksData?.map(t => t.id) || [])
-              
-            if (progressError) {
-              console.error("Error fetching user progress:", progressError)
+            const completedTrackIds = completedTasks.map(task => task.track_id)
+            setCompletedTracks(completedTrackIds)
+          }
+          
+          // Get current track (latest in-progress task's track or first track if none in progress)
+          const currentProgressTask = taskProgressData?.find(tp => tp.status === "in-progress")
+          if (currentProgressTask) {
+            const { data: currentTask, error: currentTaskError } = await supabaseClient
+              .from("tasks")
+              .select("track_id")
+              .eq("id", currentProgressTask.task_id)
+              .single()
+
+            if (currentTaskError) {
+              console.error("Error fetching current task data:", currentTaskError)
             } else {
-              // Create a lookup map for easier access
-              const progressMap: Record<string, UserTaskProgress> = {}
-              progressData?.forEach(progress => {
-                progressMap[progress.task_id] = progress
-              })
-              setUserProgress(progressMap)
+              setCurrentTrackId(currentTask.track_id)
+            }
+          } else {
+            // If no current progress, find the latest completed task
+            const { data: latestCompletedTask, error: latestCompletedTaskError } = await supabaseClient
+              .from("user_task_progress")
+              .select("task_id")
+              .eq("user_id", user?.id || 'test-user-id')
+              .eq("status", "completed")
+              .order("completed_at", { ascending: false })
+              .limit(1)
+              .single()
+            
+            if (!latestCompletedTaskError) {
+              // Find the track of the latest completed task
+              const { data: taskData, error: taskError } = await supabaseClient
+                .from("tasks")
+                .select("track_id")
+                .eq("id", latestCompletedTask.task_id)
+                .single()
+              
+              if (taskError) {
+                console.error("Error fetching task data:", taskError)
+              } else {
+                setCurrentTrackId(taskData.track_id)
+              }
+            } else {
+              // If no tasks have been completed, set to track with earliest start date
+              const { data: earliestTrack, error: earliestTrackError } = await supabaseClient
+                .from("tracks")
+                .select("*")
+                .order("start_date", { ascending: true })
+                .limit(1)
+                .single()
+              console.log('Finding earliest track...')
+              if (earliestTrackError) {
+                console.error("Error fetching earliest track:", earliestTrackError)
+              } else {
+                setCurrentTrackId(earliestTrack.id)
+                console.log('Found earliest track:', earliestTrack)
+                console.log('Earliest track ID', earliestTrack.id, currentTrackId)
+              }
+            }
+          }
+          
+          // Fetch current track data
+          console.log('Current track ID:', currentTrackId)
+          if (currentTrackId) {
+            console.log('Fetching current track data...')
+            const { data: currentTrackData, error: trackError } = await supabaseClient
+              .from("tracks")
+              .select("*")
+              .eq("id", currentTrackId)
+              .single()
+            console.log('Fetched current track data:', currentTrackData)
+            if (trackError) {
+              console.error("Error fetching current track:", trackError)
+            } else {
+              setCurrentTrack(currentTrackData)
+
+              // Fetch tasks for current track
+              console.log('Fetching tasks for current track...')
+              const { data: tasksData, error: tasksError } = await supabaseClient
+                .from("tasks")
+                .select("*")
+                .eq("track_id", currentTrackData.id)
+                .order("task_order", { ascending: true })
+                
+              if (tasksError) {
+                console.error("Error fetching tasks:", tasksError)
+              } else {
+                setTasks(tasksData || [])
+                console.log('Fetched tasks:', tasksData)
+                // Fetch user progress for these tasks
+                const { data: progressData, error: progressError } = await supabaseClient
+                  .from("user_task_progress")
+                  .select("*")
+                  .eq("user_id", user?.id || 'test-user-id')
+                  .in("task_id", tasksData?.map(t => t.id) || [])
+                  
+                if (progressError) {
+                  console.error("Error fetching user progress:", progressError)
+                } else {
+                  // Create a lookup map for easier access
+                  const progressMap: Record<string, UserTaskProgress> = {}
+                  progressData?.forEach(progress => {
+                    progressMap[progress.task_id] = progress
+                  })
+                  setUserProgress(progressMap)
+                }
+              }
             }
           }
         }
@@ -100,7 +194,7 @@ export default function Dashboard() {
     fetchDashboardData()
     
     // Set up real-time subscriptions
-    const tasksSubscription = supabase
+    const progressSubscription = supabase
       .channel('dashboard-changes')
       .on('postgres_changes', { 
         event: '*', 
@@ -110,110 +204,142 @@ export default function Dashboard() {
       }, () => {
         fetchDashboardData()
       })
+      .on('postgres_changes', { 
+        event: '*', 
+        schema: 'public', 
+        table: 'user_track_progress',
+        filter: `user_id=eq.${user?.id}`
+      }, () => {
+        fetchDashboardData()
+      })
       .subscribe()
       
     return () => {
-      tasksSubscription.unsubscribe()
+      progressSubscription.unsubscribe()
     }
-  }, [user])
+  }, [user, isTestUser])
 
   useEffect(() => {
     const fetchTracks = async () => {
       setIsLoading(true)
-      // Fetch tracks with their tasks
-      const { data: tracksData, error: tracksError } = await supabase
-        .from("tracks")
-        .select("*")
-        .order("start_date", { ascending: true })
-
-      if (tracksError) {
-        console.error("Error fetching tracks:", tracksError)
-        setIsLoading(false)
-        return
-      }
-
-      // Compile all tasks in sequence
-      let compiledTasks: Array<Task & { track_name: string; completed: boolean }> = [];
       
-      // Get tasks for each track
-      const tracksWithTasks = await Promise.all(
-        tracksData.map(async (track) => {
-          const { data: tasks } = await supabase
-            .from("tasks")
-            .select("*")
-            .eq("track_id", track.id)
-            .order("task_order", { ascending: true })
+      try {
+        // Use createClient() instead of the imported supabase client for client-side fetching
+        const supabaseClient = createClient()
+        
+        // Fetch tracks with their tasks
+        const { data: tracksData, error: tracksError } = await supabaseClient
+          .from("tracks")
+          .select("*")
+          .order("start_date", { ascending: true })
 
-          // Fetch user progress for tasks in this track (only if real user, not test user)
-          let progress = 0;
-          let userProgress: UserTaskProgress[] = [];
-          
-          if (user && !isTestUser) {
-            const { data: progressData } = await supabase
-              .from("user_task_progress")
-              .select("*")
-              .eq("user_id", user.id)
-              .in(
-                "task_id",
-                tasks?.map((t: Task) => t.id) || []
-              )
-            
-            userProgress = progressData || [];
-            
-            // Calculate progress percentage
-            const completedTasks = userProgress.filter(
-              (p) => p.status === "completed"
-            ).length || 0
-            
-            progress = tasks?.length
-              ? Math.round((completedTasks / tasks.length) * 100)
-              : 0
-          } else if (isTestUser) {
-            // For test user: random progress between 10-90%
-            progress = Math.floor(Math.random() * 80) + 10;
-          }
-          
-          // Add to compiled tasks list
-          if (tasks) {
-            const tasksWithTrackInfo = tasks.map((t: Task) => ({
-              ...t, 
-              track_name: track.name,
-              completed: userProgress.some(p => p.task_id === t.id && p.status === 'completed')
-            }));
-            compiledTasks = [...compiledTasks, ...tasksWithTrackInfo];
-          }
-
-          return {
-            ...track,
-            tasks: tasks || [],
-            progress,
-          }
-        })
-      )
-
-      setTracks(tracksWithTasks)
-      setAllTasks(compiledTasks)
-      
-      // Find the current task index
-      if (compiledTasks.length > 0) {
-        let currentTaskIdx = 0;
-        if (user && !isTestUser) {
-          // Find the first incomplete task
-          currentTaskIdx = compiledTasks.findIndex((task) => !task.completed);
-          
-          // If all tasks completed, point to the last task
-          if (currentTaskIdx === -1) {
-            currentTaskIdx = compiledTasks.length - 1;
-          }
-        } else if (isTestUser) {
-          // For test user, choose a random task as current
-          currentTaskIdx = Math.floor(Math.random() * compiledTasks.length);
+        if (tracksError) {
+          console.error("Error fetching tracks:", tracksError)
+          setIsLoading(false)
+          return
         }
         
-        setCurrentTaskIndex(currentTaskIdx);
+        // Add more detailed logging
+        console.log('tracksData response:', tracksData)
+        
+        if (!tracksData || tracksData.length === 0) {
+          console.log('No tracks found. Check your Supabase data and permissions.')
+          setIsLoading(false)
+          return
+        }
+
+        // Compile all tasks in sequence
+        let compiledTasks: Array<Task & { track_name: string; completed: boolean }> = [];
+        
+        // Get tasks for each track
+        const tracksWithTasks = await Promise.all(
+          tracksData.map(async (track) => {
+            const { data: tasks, error: tasksError } = await supabaseClient
+              .from("tasks")
+              .select("*")
+              .eq("track_id", track.id)
+              .order("task_order", { ascending: true })
+            
+            if (tasksError) {
+              console.error(`Error fetching tasks for track ${track.id}:`, tasksError)
+            }
+            
+            console.log(`Tasks for track ${track.id}:`, tasks)
+            
+            // Fetch user progress for tasks in this track (only if real user, not test user)
+            let progress = 0;
+            let userProgress: UserTaskProgress[] = [];
+            
+            if (user && !isTestUser) {
+              const { data: progressData } = await supabaseClient
+                .from("user_task_progress")
+                .select("*")
+                .eq("user_id", user.id)
+                .in(
+                  "task_id",
+                  tasks?.map((t: Task) => t.id) || []
+                )
+              
+              userProgress = progressData || [];
+              
+              // Calculate progress percentage
+              const completedTasks = userProgress.filter(
+                (p) => p.status === "completed"
+              ).length || 0
+              
+              progress = tasks?.length
+                ? Math.round((completedTasks / tasks.length) * 100)
+                : 0
+            } else if (isTestUser) {
+              // For test user: random progress between 10-90%
+              progress = Math.floor(Math.random() * 80) + 10;
+            }
+            
+            // Add to compiled tasks list
+            if (tasks) {
+              const tasksWithTrackInfo = tasks.map((t: Task) => ({
+                ...t, 
+                track_name: track.name,
+                completed: userProgress.some(p => p.task_id === t.id && p.status === 'completed')
+              }));
+              compiledTasks = [...compiledTasks, ...tasksWithTrackInfo];
+            }
+
+            return {
+              ...track,
+              tasks: tasks || [],
+              progress,
+            }
+          })
+        )
+
+        setTracks(tracksWithTasks)
+        setAllTasks(compiledTasks)
+        
+        // Find the current task index
+        if (compiledTasks.length > 0) {
+          let currentTaskIdx = 0;
+          if (user && !isTestUser) {
+            // Find the first incomplete task
+            currentTaskIdx = compiledTasks.findIndex((task) => !task.completed);
+            
+            // If all tasks completed, point to the last task
+            if (currentTaskIdx === -1) {
+              currentTaskIdx = compiledTasks.length - 1;
+            }
+          } else if (isTestUser) {
+            // For test user, choose a random task as current
+            currentTaskIdx = Math.floor(Math.random() * compiledTasks.length);
+          }
+          
+          setCurrentTaskIndex(currentTaskIdx);
+        }
+        
+        setIsLoading(false)
+      } catch (err) {
+        console.error("Error in track data fetch:", err)
+        setIsLoading(false)
       }
-      
-      setIsLoading(false)
     }
 
     fetchTracks()
@@ -311,6 +437,88 @@ export default function Dashboard() {
     }
   }
 
+  // Function to check if a track is completed
+  const isTrackCompleted = (trackId: string) => {
+    return completedTracks.includes(trackId)
+  }
+  
+  // Function to check if a track is the current track
+  const isCurrentTrack = (trackId: string) => {
+    return trackId === currentTrackId
+  }
+  
+  // Function to check if a track is unlocked (current or completed)
+  const isTrackUnlocked = (trackId: string) => {
+    return isCurrentTrack(trackId) || isTrackCompleted(trackId)
+  }
+  
+  // Function to check if a track is upcoming (not current and not completed)
+  const isUpcomingTrack = (trackId: string) => {
+    return !isCurrentTrack(trackId) && !isTrackCompleted(trackId)
+  }
+  
+  // Function to update track progress
+  const updateTrackProgress = async (trackId: string, status: string) => {
+    if (!user) return
+    
+    // Check if all tasks in the track are completed before marking track as completed
+    if (status === "completed") {
+      const trackTasks = allTasks.filter(task => task.track_id === trackId)
+      const allTasksCompleted = trackTasks.every(task => task.completed)
+      
+      if (!allTasksCompleted) {
+        // Cannot mark track as completed if not all tasks are completed
+        return
+      }
+    }
+    
+    // Check if this track can be updated (only current track or completed tracks)
+    if (!isTrackUnlocked(trackId) && status !== "completed") {
+      // Cannot update upcoming tracks
+      return
+    }
+    
+    const { data: existingProgress } = await supabase
+      .from("user_track_progress")
+      .select("*")
+      .eq("user_id", user.id)
+      .eq("track_id", trackId)
+      .single()
+    
+    const now = new Date().toISOString()
+    
+    if (existingProgress) {
+      // Update existing progress
+      const { error } = await supabase
+        .from("user_track_progress")
+        .update({ 
+          status,
+          completed_at: status === "completed" ? now : null,
+          updated_at: now
+        })
+        .eq("id", existingProgress.id)
+        
+      if (error) {
+        console.error("Error updating track progress:", error)
+      }
+    } else {
+      // Create new progress entry
+      const { error } = await supabase
+        .from("user_track_progress")
+        .insert({ 
+          user_id: user.id,
+          track_id: trackId,
+          status,
+          completed_at: status === "completed" ? now : null,
+          updated_at: now
+        })
+        
+      if (error) {
+        console.error("Error creating track progress:", error)
+      }
+    }
+  }
+
   return (
     <div className="w-full max-w-full p-3 md:p-6 overflow-x-hidden">
       {isDev && isTestUser && (
@@ -339,109 +547,184 @@ export default function Dashboard() {
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-6 min-w-0">
-          {/* Main Task Layout Section - Vertical Tasks */}
-          <div className="relative col-span-1">
-            <Card className="relative border border-white/10 bg-black p-3 md:p-6 overflow-hidden">
-              <GlowingEffect 
-                blur={16} 
-                glow={true} 
-                spread={60} 
-                variant="white" 
-                disabled={false}
-                className="z-0"
-              />
-              
-              <div className="mb-4 md:mb-6">
-                <h2 className="font-geist-mono text-lg md:text-xl text-white mb-2 break-words">
-                  {getCurrentWeekName()}
-                </h2>
-                <p className="font-geist-mono text-xs md:text-sm text-gray-400">
-                  Your progress through the course
-                </p>
-              </div>
-              
-              <div className="flex flex-col gap-3 md:gap-4">
-                {allTasks.length > 0 ? (
-                  <>
-                    {/* Previous task - only show if there is a previous task */}
-                    {currentTaskIndex > 0 && (
-                      <TaskCard 
-                        task={allTasks[currentTaskIndex - 1]} 
-                        status="previous"
-                        progress={100}
-                        deadline={allTasks[currentTaskIndex - 1].deadline || undefined}
-                      />
-                    )}
-                    
-                    {/* Current task */}
-                    {currentTaskIndex >= 0 && currentTaskIndex < allTasks.length && (
-                      <TaskCard 
-                        task={allTasks[currentTaskIndex]} 
-                        status="current"
-                        progress={allTasks[currentTaskIndex].completed ? 100 : 0}
-                        deadline={allTasks[currentTaskIndex].deadline || undefined}
-                      />
-                    )}
-                    
-                    {/* Future task - only show if there is a next task */}
-                    {currentTaskIndex < allTasks.length - 1 && (
-                      <TaskCard 
-                        task={allTasks[currentTaskIndex + 1]} 
-                        status="future"
-                        deadline={allTasks[currentTaskIndex + 1].deadline || undefined}
-                      />
-                    )}
-                  </>
-                ) : (
-                  <div className="font-geist-mono text-center text-sm text-gray-500 p-4 md:p-8">
-                    No tasks available in the current track
-                  </div>
-                )}
-              </div>
-              
-              {/* Overall Progress */}
-              <div className="mt-6 md:mt-8 border-t border-white/10 pt-4">
-                <div className="font-geist-mono flex justify-between text-xs md:text-sm">
-                  <span className="text-gray-400">Overall Progress</span>
-                  <span className="text-white">{getOverallProgress()}% Complete</span>
-                </div>
-                <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/10">
-                  <div
-                    className="h-full bg-white"
-                    style={{ width: `${getOverallProgress()}%` }}
-                  />
-                </div>
-              </div>
-              
-              {/* Timer for next deadline */}
-              {allTasks.length > 0 && currentTaskIndex >= 0 && currentTaskIndex < allTasks.length && allTasks[currentTaskIndex].deadline && (
-                <div className="mt-4 p-2 md:p-3 border border-white/10 rounded-md bg-white/5">
-                  <div className="flex justify-between items-center">
-                    <span className="text-xs md:text-sm text-gray-400">Next Deadline:</span>
-                    <span className={`text-xs md:text-sm font-medium ${
-                      getTimeRemaining(allTasks[currentTaskIndex].deadline || "").expired 
-                        ? "text-red-300" 
-                        : "text-blue-300"
-                    }`}>
-                      {getTimeRemaining(allTasks[currentTaskIndex].deadline || "").text}
-                    </span>
-                  </div>
-                </div>
-              )}
-              
-              <div className="mt-4 flex justify-center">
-                <Button
-                  variant="outline"
-                  className="font-geist-mono border-white/20 bg-transparent text-white hover:bg-white/5 text-xs md:text-sm px-2 py-1 md:px-4 md:py-2"
-                  asChild
+          {/* Tabbed Layout */}
+          <Card className="relative border border-white/10 bg-black p-3 md:p-6 overflow-hidden">
+            <GlowingEffect 
+              blur={16} 
+              glow={true} 
+              spread={60} 
+              variant="white" 
+              disabled={false}
+              className="z-0"
+            />
+            
+            <Tab.Group defaultIndex={0} onChange={(index) => {
+              setActiveTab(index === 0 ? 'current' : index === 1 ? 'upcoming' : 'past');
+            }}>
+              <Tab.List className="flex space-x-1 rounded-xl bg-white/5 p-1 mb-6">
+                <Tab
+                  className={({ selected }) =>
+                    `w-full rounded-lg py-2.5 text-sm font-medium leading-5 text-white
+                    ${selected ? 'bg-white/10 shadow' : 'text-white/60 hover:bg-white/[0.07] hover:text-white'}`
+                  }
                 >
-                  <Link href="/dashboard/tracks">View All Weeks</Link>
-                </Button>
-              </div>
-            </Card>
-          </div>
+                  Current Week
+                </Tab>
+                <Tab
+                  className={({ selected }) =>
+                    `w-full rounded-lg py-2.5 text-sm font-medium leading-5 text-white
+                    ${selected ? 'bg-white/10 shadow' : 'text-white/60 hover:bg-white/[0.07] hover:text-white'}`
+                  }
+                >
+                  Upcoming Weeks
+                </Tab>
+                <Tab
+                  className={({ selected }) =>
+                    `w-full rounded-lg py-2.5 text-sm font-medium leading-5 text-white
+                    ${selected ? 'bg-white/10 shadow' : 'text-white/60 hover:bg-white/[0.07] hover:text-white'}`
+                  }
+                >
+                  Past Weeks
+                </Tab>
+              </Tab.List>
+              
+              <Tab.Panels>
+                {/* Current Week Panel */}
+                <Tab.Panel>
+                  {currentTrack ? (
+                    <div>
+                      <div className="mb-4 md:mb-6">
+                        <h2 className="font-geist-mono text-lg md:text-xl text-white mb-2 break-words">
+                          {currentTrack.name}
+                        </h2>
+                        <p className="font-geist-mono text-xs md:text-sm text-gray-400">
+                          Your current week
+                        </p>
+                      </div>
+                      
+                      <div className="flex flex-col gap-3 md:gap-4">
+                        {tasks.length > 0 ? (
+                          tasks.map((task, index) => {
+                            const progress = userProgress[task.id];
+                            const taskStatus = getTaskStatus(task, progress);
+                            
+                            return (
+                              <TaskCard 
+                                key={task.id}
+                                task={task} 
+                                status={taskStatus.status as TaskStatus}
+                                progress={taskStatus.status === "completed" ? 100 : taskStatus.status === "in-progress" ? 50 : 0}
+                                deadline={task.deadline || undefined}
+                                onChange={(status: TaskStatus) => updateTaskStatus(task.id, status)}
+                              />
+                            );
+                          })
+                        ) : (
+                          <div className="font-geist-mono text-center text-sm text-gray-500 p-4 md:p-8">
+                            No tasks available in the current week
+                          </div>
+                        )}
+                      </div>
+                      
+                      {/* Track completion button - only show if all tasks are completed */}
+                      {tasks.length > 0 && tasks.every(task => userProgress[task.id]?.status === "completed") && (
+                        <div className="mt-6 flex justify-center">
+                          <Button
+                            variant="default"
+                            className="font-geist-mono bg-white text-black hover:bg-white/90"
+                            onClick={() => updateTrackProgress(currentTrack.id, "completed")}
+                          >
+                            Complete Week
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="font-geist-mono text-center text-sm text-gray-500 p-4 md:p-8">
+                      No current week assigned. Please contact your instructor.
+                    </div>
+                  )}
+                </Tab.Panel>
+                
+                {/* Upcoming Weeks Panel */}
+                <Tab.Panel>
+                  <div className="mb-4 md:mb-6">
+                    <h2 className="font-geist-mono text-lg md:text-xl text-white mb-2 break-words">
+                      Upcoming Weeks
+                    </h2>
+                    <p className="font-geist-mono text-xs md:text-sm text-gray-400">
+                      Weeks that will be unlocked after you complete the current week
+                    </p>
+                  </div>
+                  
+                  <div className="space-y-4">
+                    {tracks.filter(track => isUpcomingTrack(track.id)).length > 0 ? (
+                      tracks
+                        .filter(track => isUpcomingTrack(track.id))
+                        .map(track => (
+                          <Card key={track.id} className="border border-white/10 bg-black/50 p-4">
+                            <div className="flex justify-between items-center mb-2">
+                              <h3 className="font-geist-mono text-base text-white">{track.name}</h3>
+                              <Badge variant="outline" className="text-gray-400 border-gray-500">Locked</Badge>
+                            </div>
+                            <p className="text-sm text-gray-400 mb-3">{track.description}</p>
+                            <div className="text-xs text-gray-500">
+                              Complete the current week to unlock this content
+                            </div>
+                          </Card>
+                        ))
+                    ) : (
+                      <div className="font-geist-mono text-center text-sm text-gray-500 p-4 md:p-8">
+                        No upcoming weeks available
+                      </div>
+                    )}
+                  </div>
+                </Tab.Panel>
+                
+                {/* Past Weeks Panel */}
+                <Tab.Panel>
+                  <div className="mb-4 md:mb-6">
+                    <h2 className="font-geist-mono text-lg md:text-xl text-white mb-2 break-words">
+                      Past Weeks
+                    </h2>
+                    <p className="font-geist-mono text-xs md:text-sm text-gray-400">
+                      Weeks you have already completed
+                    </p>
+                  </div>
+                  
+                  <div className="space-y-4">
+                    {tracks.filter(track => isTrackCompleted(track.id)).length > 0 ? (
+                      tracks
+                        .filter(track => isTrackCompleted(track.id))
+                        .map(track => (
+                          <Card key={track.id} className="border border-white/10 bg-black/50 p-4">
+                            <div className="flex justify-between items-center mb-2">
+                              <h3 className="font-geist-mono text-base text-white">{track.name}</h3>
+                              <Badge className="bg-green-500/20 text-green-300 border-green-500/30">Completed</Badge>
+                            </div>
+                            <p className="text-sm text-gray-400 mb-3">{track.description}</p>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="font-geist-mono border-white/20 bg-transparent text-white hover:bg-white/5 text-xs"
+                              asChild
+                            >
+                              <Link href={`/dashboard/tracks/${track.id}`}>Review Week</Link>
+                            </Button>
+                          </Card>
+                        ))
+                    ) : (
+                      <div className="font-geist-mono text-center text-sm text-gray-500 p-4 md:p-8">
+                        No completed weeks yet
+                      </div>
+                    )}
+                  </div>
+                </Tab.Panel>
+              </Tab.Panels>
+            </Tab.Group>
+          </Card>
 
-          {/* Next Course Milestones */}
+          {/* Progress Overview */}
           <div className="grid gap-4 md:gap-6 grid-cols-1 md:grid-cols-2">
             {/* Weeks Overview */}
             <Card className="relative overflow-hidden border border-white/10 bg-black">
@@ -482,13 +765,13 @@ export default function Dashboard() {
                           {track.name}
                         </h3>
                         <span className="font-geist-mono text-xs text-gray-400 whitespace-nowrap">
-                          {track.progress}%
+                          {isTrackCompleted(track.id) ? "100" : track.progress}%
                         </span>
                       </div>
                       <div className="h-1 overflow-hidden rounded-full bg-white/10">
                         <div
                           className="h-full bg-white"
-                          style={{ width: `${track.progress}%` }}
+                          style={{ width: `${isTrackCompleted(track.id) ? 100 : track.progress}%` }}
                         />
                       </div>
                     </div>
@@ -536,9 +819,9 @@ export default function Dashboard() {
                     </div>
                     <div className="rounded bg-white/5 p-2 text-center">
                       <div className="font-sans text-base md:text-xl font-light text-white">
-                        {tracks.length}
+                        {completedTracks.length}/{tracks.length}
                       </div>
-                      <div className="font-geist-mono text-[10px] md:text-xs text-gray-400">Total Weeks</div>
+                      <div className="font-geist-mono text-[10px] md:text-xs text-gray-400">Weeks Completed</div>
                     </div>
                     <div className="col-span-2 mt-2 rounded bg-white/5 p-2 text-center">
                       <div className="font-sans text-base md:text-xl font-light text-white">

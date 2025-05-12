@@ -7,9 +7,11 @@ import { Database } from "@/types/supabase"
 
 type Task = Database["public"]["Tables"]["tasks"]["Row"]
 
+export type TaskStatus = "previous" | "current" | "future"
+
 interface TaskCardProps {
   task: Task
-  status: "previous" | "current" | "future"
+  status: TaskStatus
   progress?: number
   deadline?: string
 }
