@@ -616,10 +616,7 @@ export default function Dashboard() {
                               <TaskCard 
                                 key={task.id}
                                 task={task} 
-                                status={taskStatus.status as TaskStatus}
-                                progress={taskStatus.status === "completed" ? 100 : taskStatus.status === "in-progress" ? 50 : 0}
                                 deadline={task.deadline || undefined}
-                                onChange={(status: TaskStatus) => updateTaskStatus(task.id, status)}
                               />
                             );
                           })

@@ -4,6 +4,9 @@ import Link from "next/link"
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { GlowingEffect } from "@/components/ui/glowing-effect"
 import { Database } from "@/types/supabase"
+import { useEffect, useState } from "react"
+import { supabase } from "@/lib/supabase"
+import { useAuth } from "@/contexts/auth-context"
 
 type Task = Database["public"]["Tables"]["tasks"]["Row"]
 
@@ -11,17 +14,107 @@ export type TaskStatus = "previous" | "current" | "future"
 
 interface TaskCardProps {
   task: Task
-  status: TaskStatus
-  progress?: number
   deadline?: string
 }
 
-export function TaskCard({ task, status, progress, deadline }: TaskCardProps) {
+export function TaskCard({ task, deadline }: TaskCardProps) {
+  const [isCompleted, setIsCompleted] = useState(false)
+  const [isLoading, setIsLoading] = useState(false)
+  const [status, setStatus] = useState<TaskStatus>("future")
+  const [progress, setProgress] = useState<number>(0)
+  const { user, profile } = useAuth()
+
+  useEffect(() => {
+    const checkTaskCompletion = async () => {
+      setIsLoading(true);
+      try {
+        const { data, error } = await supabase
+          .from("user_task_progress")
+          .select("status")
+          .eq("user_id", user?.id)
+          .eq("task_id", task.id)
+          .single();
+
+        if (error && error.code !== 'PGRST116') { // PGRST116 is the code for no rows found
+          console.error("Error fetching task completion status:", error);
+        } else if (data) {
+          setIsCompleted(data.status === "completed");
+          setStatus(data.status === "completed" ? "previous" : "current");
+          setProgress(data.status === "completed" ? 100 : 50); // Assuming 50% for in-progress
+        }
+      } catch (err) {
+        console.error("Unexpected error checking task completion:", err);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    checkTaskCompletion();
+  }, [task.id, user?.id]);
+
+  const handleMarkAsCompleted = async () => {
+    setIsLoading(true)
+    const { data, error } = await supabase
+      .from("user_task_progress")
+      .select("id")
+      .eq("user_id", user?.id)
+      .eq("task_id", task.id)
+      .single()
+
+    if (error && error.code !== 'PGRST116') { // PGRST116 is the code for no rows found
+      console.error("Error checking task progress:", error)
+    } else if (data) {
+      // Update the existing entry with the current date
+      const { error: updateError } = await supabase
+        .from("user_task_progress")
+        .update({ status: "completed", completed_at: new Date().toISOString() })
+        .eq("id", data.id)
+
+      if (!updateError) {
+        setIsCompleted(true)
+        setStatus("previous")
+        setProgress(100)
+      } else {
+        console.error("Error updating task progress:", updateError)
+      }
+    } else {
+      // Insert a new entry if it doesn't exist
+      const { error: insertError } = await supabase
+        .from("user_task_progress")
+        .insert([{ user_id: user?.id, task_id: task.id, status: "completed", completed_at: new Date().toISOString() }])
+
+      if (!insertError) {
+        setIsCompleted(true)
+        setStatus("previous")
+        setProgress(100)
+      } else {
+        console.error("Error inserting task progress:", insertError)
+      }
+    }
+    setIsLoading(false)
+  }
+
+  const handleMarkAsIncomplete = async () => {
+    setIsLoading(true)
+    const { error } = await supabase
+      .from("user_task_progress")
+      .delete()
+      .eq("user_id", user?.id)
+      .eq("task_id", task.id)
+    
+    if (!error) {
+      setIsCompleted(false)
+      setStatus("current")
+      setProgress(50) // Assuming 50% for in-progress
+    }
+    setIsLoading(false)
+  }
+
   return (
-    <Card className={`relative overflow-hidden border bg-black mb-4 ${
-      status === "future" ? "border-dashed border-white/30" : 
-      status === "current" ? "border-white/10" : 
-      "border-white/10 opacity-80"
+    <Card className={`relative overflow-hidden border-2 bg-black mb-2 ${
+      status === "future" ? "border-dashed border-white/50" : 
+      status === "current" ? "border-white/20" : 
+      "border-white/20 opacity-80"
     }`}>
       <GlowingEffect 
         blur={12} 
@@ -31,8 +124,8 @@ export function TaskCard({ task, status, progress, deadline }: TaskCardProps) {
         disabled={false}
         className="z-0"
       />
-      <CardHeader className="border-b border-white/10 pb-3">
-        <CardTitle className="font-geist-mono flex items-center gap-2 text-sm font-normal text-white">
+      <CardHeader className="border-b border-white/20 pb-2">
+        <CardTitle className="font-geist-mono flex items-center gap-1 text-sm font-normal text-white">
           {status === "previous" && (
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -85,16 +178,16 @@ export function TaskCard({ task, status, progress, deadline }: TaskCardProps) {
           {status === "previous" ? "PREVIOUS TASK" : status === "current" ? "CURRENT TASK" : "FUTURE TASK"}
         </CardTitle>
       </CardHeader>
-      <CardContent className="p-6">
-        <h3 className="font-sans mb-2 text-2xl font-light tracking-[-0.02em] text-white">
+      <CardContent className="p-4">
+        <h3 className="font-sans mb-1 text-2xl font-light tracking-[-0.02em] text-white">
           {task.name}
         </h3>
-        <p className="font-geist-mono mb-4 text-xs text-gray-400">
+        <p className="font-geist-mono mb-2 text-xs text-gray-400">
           {task.caption}
         </p>
         
         {progress !== undefined && (
-          <div className="mt-4">
+          <div className="mt-2">
             <div className="font-geist-mono mb-1 flex justify-between text-xs">
               <span className="text-gray-400">Progress</span>
               <span className="text-white">{progress}%</span>
@@ -109,7 +202,7 @@ export function TaskCard({ task, status, progress, deadline }: TaskCardProps) {
         )}
         
         {deadline && (
-          <div className="font-geist-mono mt-4 text-xs text-white/70">
+          <div className="font-geist-mono mt-2 text-xs text-white/70">
             <div className="flex justify-between">
               <span>Deadline:</span>
               <span>{new Date(deadline).toLocaleDateString()}</span>
@@ -123,8 +216,18 @@ export function TaskCard({ task, status, progress, deadline }: TaskCardProps) {
         )}
       </CardContent>
       
+      <div className="px-4 py-2">
+        <button
+          onClick={isCompleted ? handleMarkAsIncomplete : handleMarkAsCompleted}
+          className={`font-geist-mono text-xs ${isCompleted ? 'text-red-500' : 'text-green-500'} hover:underline`}
+          disabled={isLoading} // Assume isLoading is a state variable indicating loading state
+        >
+          {isLoading ? "Loading..." : isCompleted ? "Mark as Incomplete" : "Mark as Completed"}
+        </button>
+      </div>
+
       {task.resources_url && (
-        <CardFooter className="border-t border-white/10 px-6 py-3">
+        <CardFooter className="border-t border-white/20 px-4 py-2">
           <Link 
             href={task.resources_url} 
             className="font-geist-mono text-xs text-white hover:underline"
