@@ -17,7 +17,7 @@ import { createClient } from "@/lib/supabase/client"
 type Track = Database["public"]["Tables"]["tracks"]["Row"]
 type Task = Database["public"]["Tables"]["tasks"]["Row"]
 type UserTaskProgress = Database["public"]["Tables"]["user_task_progress"]["Row"]
-
+  
 export default function Dashboard() {
   const { user, profile } = useAuth()
   const router = useRouter()
@@ -634,7 +634,51 @@ export default function Dashboard() {
                           <Button
                             variant="default"
                             className="font-geist-mono bg-white text-black hover:bg-white/90"
-                            onClick={() => updateTrackProgress(currentTrack.id, "completed")}
+                            onClick={async () => {
+                              // Mark current track as completed
+                              await updateTrackProgress(currentTrack.id, "completed");
+
+                              // Find the next week according to the earliest start date excluding the current week
+                              const { data: nextTrack, error } = await supabase
+                                .from("tracks")
+                                .select("id")
+                                .neq("id", currentTrack.id)
+                                .order("start_date", { ascending: true })
+                                .limit(1)
+                                .single();
+
+                              if (error) {
+                                console.error("Error fetching next track:", error);
+                                return;
+                              }
+
+                              // Get the first task of the next track
+                              const { data: nextTask, error: taskError } = await supabase
+                                .from("tasks")
+                                .select("id")
+                                .eq("track_id", nextTrack.id)
+                                .order("task_order", { ascending: true })
+                                .limit(1)
+                                .single();
+
+                              if (taskError) {
+                                console.error("Error fetching next task:", taskError);
+                                return;
+                              }
+
+                              // Set the status of the first task of the next week as 'in-progress'
+                              const { error: progressError } = await supabase
+                                .from("user_task_progress")
+                                .insert({
+                                  user_id: user?.id,
+                                  task_id: nextTask.id,
+                                  status: "in-progress",
+                                });
+
+                              if (progressError) {
+                                console.error("Error updating task progress:", progressError);
+                              }
+                            }}
                           >
                             Complete Week
                           </Button>
