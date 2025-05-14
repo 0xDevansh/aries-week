@@ -5,7 +5,6 @@ import Link from "next/link"
 import Image from "next/image"
 import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
-import { Button } from "@/components/ui/button"
 import { useAuth } from "@/contexts/auth-context"
 import { Sidebar, SidebarBody, SidebarLink } from "@/components/ui/sidebar"
 
@@ -20,7 +19,7 @@ export default function DashboardLayout({
 }: {
   children: React.ReactNode
 }) {
-  const { user, profile, signOut } = useAuth()
+  const { profile, signOut } = useAuth()
   const pathname = usePathname()
   const [isCollapsed, setIsCollapsed] = useState(true)
 

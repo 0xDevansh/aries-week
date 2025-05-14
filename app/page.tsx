@@ -92,7 +92,7 @@ export default function Home() {
       animationComplete = true;
       setTitleText(originalText);
     };
-  }, [isHoveringTitle]);
+  }, [isHoveringTitle, titleText]);
   
   // Handle mouse enter for cards
   const handleCardMouseEnter = (index: number) => {

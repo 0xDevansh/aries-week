@@ -129,7 +129,7 @@ export default function AdminPage() {
         event: '*', 
         schema: 'public', 
         table: 'tracks' 
-      }, (payload) => {
+      }, (_) => {
         fetchData()
       })
       .subscribe()
@@ -140,7 +140,7 @@ export default function AdminPage() {
         event: '*', 
         schema: 'public', 
         table: 'tasks' 
-      }, (payload) => {
+      }, (_) => {
         if (selectedTrack) {
           handleTrackSelect(selectedTrack)
         }
@@ -151,7 +151,7 @@ export default function AdminPage() {
       tracksSubscription.unsubscribe()
       tasksSubscription.unsubscribe()
     }
-  }, [user, profile, router])
+  }, [user, profile, router, selectedTrack])
 
   // Function to update track status in database
   const updateTrackStatus = async (trackId: string, status: string) => {
@@ -178,7 +178,7 @@ export default function AdminPage() {
     if (!currentTrack || !currentTrack.name) return
     
     try {
-      const { data, error } = await supabase
+      const { error } = await supabase
         .from("tracks")
         .insert({
           name: currentTrack.name,
